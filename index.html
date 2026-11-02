@@ -282,14 +282,30 @@ function streak(id){
 let storageOK = true;
 try{ localStorage.setItem(LS_KEY+'-test','1'); localStorage.removeItem(LS_KEY+'-test'); }catch(e){ storageOK=false; }
 try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+let syncState = 'local';
+const SYNC_LABELS = {local:['ok','Saved on this phone'], ok:['ok','Synced'], busy:['busy','Syncing…'], offline:['busy','Offline — will sync'], warn:['warn','Sync problem — saved on this phone']};
 function syncHTML(){
-  return storageOK ? `<div class="sync ok" id="sync"><i></i>Saved on this phone</div>`
-                   : `<div class="sync warn" id="sync"><i></i>Not saving — private tab?</div>`;
+  if(!storageOK && syncState==='local') return `<div class="sync warn" id="sync"><i></i>Not saving — private tab?</div>`;
+  const m = SYNC_LABELS[syncState] || SYNC_LABELS.local;
+  return `<div class="sync ${m[0]}" id="sync"><i></i>${m[1]}</div>`;
 }
+function setSync(s){ syncState=s; const el=document.getElementById('sync'); if(el) el.outerHTML = syncHTML(); }
+function localSave(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); storageOK=true; }catch(e){ storageOK=false; } }
 function save(){
   state.updatedAt = Date.now();
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); storageOK=true; }catch(e){ storageOK=false; }
+  localSave();
+  if(window.ncSync && window.ncSync.schedule) window.ncSync.schedule();
 }
+const typing = () => { const a=document.activeElement; return a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA'); };
+let renderLater=false;
+document.addEventListener('focusout', ()=>{ setTimeout(()=>{ if(renderLater && !typing()){ renderLater=false; render(); } },50); });
+// small API for the sync module (sync.js)
+window.ncApp = {
+  getState: () => state,
+  replaceState: s => { state = normalize(s); localSave(); if(typing()) renderLater = true; else render(); },
+  setSync,
+  refreshAccount: () => { const el=document.getElementById('account'); if(!el) return; const pw=document.getElementById('authPass'); const keep=pw?pw.value:''; el.innerHTML = accountHTML(); const pw2=document.getElementById('authPass'); if(pw2) pw2.value=keep; },
+};
 function backupText(){ return JSON.stringify({app:'november-challenge', exported:new Date().toISOString(), data:state}); }
 function restoreFrom(text){
   let obj; try{ obj=JSON.parse(text); }catch(e){ return 'That doesn’t look like a backup — copy the whole thing and try again.'; }
@@ -481,9 +497,11 @@ function renderSetup(){
     <div class="row"><label for="t-screen">📱 Max screen time (hours)</label><input id="t-screen" class="field" inputmode="decimal" data-set="screen" value="${esc(s.screen)}"></div>
     <div class="row" style="margin-bottom:0"><label for="t-steps">👟 Steps a day</label><input id="t-steps" class="field" inputmode="numeric" data-set="steps" value="${esc(s.steps)}"></div>
   </div>
+  <div class="sechead"><h2>🔄 Sync across devices</h2></div>
+  <div class="card" id="account">${accountHTML()}</div>
   <div class="sechead"><h2>💾 Backup</h2></div>
   <div class="card">
-    <p class="intro" style="margin:0 0 12px">Your log lives on this phone only. Save a backup every week or so — and before changing phones or clearing your browser.</p>
+    <p class="intro" style="margin:0 0 12px">${(window.ncSync&&window.ncSync.user)?'Your log is synced to your account. A backup is still a handy extra copy.':'Without signing in, your log lives on this phone only. Save a backup every week or so — and before changing phones or clearing your browser.'}</p>
     <div class="row" style="flex-wrap:wrap">
       <button class="btn" data-act="copybk">Copy backup</button>
       <button class="btn ghost" data-act="dlbk">Download file</button>
@@ -501,6 +519,25 @@ function renderSetup(){
   <p class="intro" style="text-align:center;margin-top:20px">Tip: add this page to your Home Screen so it opens like an app.</p>`;
 }
 
+function accountHTML(){
+  const sy = window.ncSync;
+  if(!sy) return `<p class="intro" style="margin:0">Loading…</p>`;
+  if(!sy.available) return `<p class="intro" style="margin:0">Sync isn’t available right now — your log is saved on this phone.</p>`;
+  const msg = sy.message ? `<div class="note" style="color:${sy.messageOk?'var(--green)':'var(--red)'}">${esc(sy.message)}</div>` : '';
+  if(sy.user) return `<div class="chead"><div class="emoji">✅</div><div class="ctitle"><b>Signed in</b><span>${esc(sy.user.email||'')}</span></div></div>
+    <p class="intro" style="margin:10px 0 12px">Sign in with the same email on any phone, tablet or computer and your log follows you.</p>
+    <button class="btn ghost" data-act="signout">Sign out</button>${msg}`;
+  return `<p class="intro" style="margin:0 0 12px">Optional. Sign in to keep your log in sync between your phone and computer. What’s already on this device comes with you.</p>
+    <div class="grat">
+      <input class="field" type="email" id="authEmail" placeholder="Email" autocomplete="email" autocapitalize="off" value="${esc(sy.lastEmail||'')}">
+      <input class="field" type="password" id="authPass" placeholder="Password (6+ characters)" autocomplete="current-password">
+    </div>
+    <div class="row" style="margin-top:12px;flex-wrap:wrap">
+      <button class="btn" data-act="signin" ${sy.busy?'disabled':''}>${sy.busy?'Please wait…':'Sign in'}</button>
+      <button class="btn ghost" data-act="signup" ${sy.busy?'disabled':''}>Create account</button>
+    </div>
+    <button class="note" data-act="reset" style="margin-top:10px;text-decoration:underline">Forgot password?</button>${msg}`;
+}
 function render(){
   app.innerHTML = view==='today' ? renderToday() : view==='month' ? renderMonth() : renderSetup();
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('on', b.dataset.v===view));
@@ -521,6 +558,12 @@ document.addEventListener('click', e=>{
   if(a==='tab'){ view=v; render(); window.scrollTo(0,0); return; }
   if(a==='nav'){ sel=Math.min(MAXDAY,Math.max(1,sel+ +v)); render(); return; }
   if(a==='goto'){ sel=+v; view='today'; render(); window.scrollTo(0,0); return; }
+  if(a==='signin' || a==='signup' || a==='reset' || a==='signout'){
+    const sy=window.ncSync; if(!sy || !sy.available) return;
+    const email=(document.getElementById('authEmail')||{}).value||'', pass=(document.getElementById('authPass')||{}).value||'';
+    if(a==='signout') sy.signOut(); else if(a==='reset') sy.reset(email.trim()); else sy.signIn(email.trim(), pass, a==='signup');
+    return;
+  }
   if(a==='copybk'){
     const t=backupText(), msg=document.getElementById('bkmsg');
     const ok=()=>{ msg.textContent='Copied ✓ — paste it into a note or email to yourself.'; };
@@ -585,6 +628,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 })();
 </script>
+<script type="module" src="sync.js"></script>
 <script>
 if('serviceWorker' in navigator){ window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 </script>
