@@ -8,12 +8,12 @@ import {
 } from './firebase.js';
 
 const firebaseConfig = {
-  apiKey: 'PASTE_API_KEY',
+  apiKey: 'AIzaSyAGo5_6uTZzHs47EyP3unHvyRaJjv7-ltE',
   authDomain: 'november-challenge-693d5.firebaseapp.com',
   projectId: 'november-challenge-693d5',
   storageBucket: 'november-challenge-693d5.firebasestorage.app',
   messagingSenderId: '746233655781',
-  appId: 'PASTE_APP_ID',
+  appId: '1:746233655781:web:34cf9b17a8668545043f0c',
 };
 
 const CHALLENGE_ID = 'nov2026';
@@ -54,7 +54,7 @@ const AUTH_ERRORS = {
 };
 const authError = e => AUTH_ERRORS[e && e.code] || 'Something went wrong — please try again.';
 
-if (firebaseConfig.apiKey.startsWith('PASTE')) {
+if (firebaseConfig.apiKey.startsWith('PASTE_')) {
   app.refreshAccount();
 } else {
   const fb = initializeApp(firebaseConfig);
